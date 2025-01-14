@@ -2,6 +2,7 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -63,8 +64,12 @@ namespace osu.Game.Screens.Play.PlayerSettings
         [Resolved]
         private IGameplayClock? gameplayClock { get; set; }
 
+        [Resolved]
+        private ScoreProcessor? scoreProcessor { get; set; }
+
         private double lastPlayAverage;
         private double lastPlayBeatmapOffset;
+        private int hitEventCountToLastCalibrationInGame;
         private HitEventTimingDistributionGraph? lastPlayGraph;
 
         private SettingsButton? useAverageButton;
@@ -182,6 +187,7 @@ namespace osu.Game.Screens.Play.PlayerSettings
         private void scoreChanged(ValueChangedEvent<ScoreInfo?> score)
         {
             referenceScoreContainer.Clear();
+            hitEventCountToLastCalibrationInGame = 0;
 
             if (score.NewValue == null)
                 return;
@@ -197,72 +203,115 @@ namespace osu.Game.Screens.Play.PlayerSettings
 
             var hitEvents = score.NewValue.HitEvents;
 
-            if (!(hitEvents.CalculateAverageHitError() is double average))
-                return;
-
-            referenceScoreContainer.Children = new Drawable[]
+            switch (calibrate(score.NewValue.HitEvents, false))
             {
-                new OsuSpriteText
-                {
-                    Text = BeatmapOffsetControlStrings.PreviousPlay
-                },
-            };
+                case OffsetCalibrationResult.NotEnoughData:
+                    referenceScoreContainer.Children = new Drawable[]
+                    {
+                        new OsuSpriteText
+                        {
+                            Text = BeatmapOffsetControlStrings.PreviousPlay
+                        },
+                    };
+
+                    referenceScoreContainer.AddRange(new Drawable[]
+                    {
+                        new OsuTextFlowContainer
+                        {
+                            RelativeSizeAxes = Axes.X,
+                            AutoSizeAxes = Axes.Y,
+                            Colour = colours.Red1,
+                            Text = BeatmapOffsetControlStrings.PreviousPlayTooShortToUseForCalibration
+                        },
+                    });
+                    break;
+
+                case OffsetCalibrationResult.Success:
+                    referenceScoreContainer.Children = new Drawable[]
+                    {
+                        new OsuSpriteText
+                        {
+                            Text = BeatmapOffsetControlStrings.PreviousPlay
+                        },
+                    };
+
+                    LinkFlowContainer globalOffsetText;
+
+                    referenceScoreContainer.AddRange(new Drawable[]
+                    {
+                        lastPlayGraph = new HitEventTimingDistributionGraph(hitEvents)
+                        {
+                            RelativeSizeAxes = Axes.X,
+                            Height = 50,
+                        },
+                        new AverageHitError(hitEvents),
+                        useAverageButton = new SettingsButton
+                        {
+                            Text = BeatmapOffsetControlStrings.CalibrateUsingLastPlay,
+                            Action = applyCalibration,
+                            Enabled = { Value = !Precision.AlmostEquals(lastPlayAverage, 0, Current.Precision / 2) }
+                        },
+                        globalOffsetText = new LinkFlowContainer
+                        {
+                            RelativeSizeAxes = Axes.X,
+                            AutoSizeAxes = Axes.Y,
+                        }
+                    });
+
+                    if (settings != null)
+                    {
+                        globalOffsetText.AddText("You can also ");
+                        globalOffsetText.AddLink("adjust the global offset", () => settings.ShowAtControl<AudioOffsetAdjustControl>());
+                        globalOffsetText.AddText(" based off this play.");
+                    }
+
+                    break;
+            }
+        }
+
+        private enum OffsetCalibrationResult
+        {
+            Success,
+            NotEnoughData,
+            SameOffset // if the offset is the same as before
+        }
+
+        /// <summary>
+        /// Calibrate the beatmap using <see cref="HitEvent"/>s of a play
+        /// </summary>
+        /// <param name="hitEvents">List of <see cref="HitEvent"/>s to calibrate to.</param>
+        /// <param name="apply">Apply the calibration? Default to true. Can be manually done with <see cref="applyCalibration"/> method.</param>
+        /// <returns>
+        /// <see cref="OffsetCalibrationResult"/>
+        /// </returns>
+        private OffsetCalibrationResult calibrate(IEnumerable<HitEvent> hitEvents, bool apply = true)
+        {
+            if (!(hitEvents.CalculateAverageHitError() is double average))
+                return OffsetCalibrationResult.SameOffset;
 
             // affecting unstable rate here is used as a substitute of determining if a hit event represents a *timed* hit event,
             // i.e. an user input that the user had to *time to the track*,
             // i.e. one that it *makes sense to use* when doing anything with timing and offsets.
             if (hitEvents.Count(HitEventExtensions.AffectsUnstableRate) < 10)
             {
-                referenceScoreContainer.AddRange(new Drawable[]
-                {
-                    new OsuTextFlowContainer
-                    {
-                        RelativeSizeAxes = Axes.X,
-                        AutoSizeAxes = Axes.Y,
-                        Colour = colours.Red1,
-                        Text = BeatmapOffsetControlStrings.PreviousPlayTooShortToUseForCalibration
-                    },
-                });
-
-                return;
+                return OffsetCalibrationResult.NotEnoughData;
             }
 
             lastPlayAverage = average;
             lastPlayBeatmapOffset = Current.Value;
 
-            LinkFlowContainer globalOffsetText;
-
-            referenceScoreContainer.AddRange(new Drawable[]
+            if (apply)
             {
-                lastPlayGraph = new HitEventTimingDistributionGraph(hitEvents)
-                {
-                    RelativeSizeAxes = Axes.X,
-                    Height = 50,
-                },
-                new AverageHitError(hitEvents),
-                useAverageButton = new SettingsButton
-                {
-                    Text = BeatmapOffsetControlStrings.CalibrateUsingLastPlay,
-                    Action = () =>
-                    {
-                        Current.Value = lastPlayBeatmapOffset - lastPlayAverage;
-                        lastAppliedScore.Value = ReferenceScore.Value;
-                    },
-                    Enabled = { Value = !Precision.AlmostEquals(lastPlayAverage, 0, Current.Precision / 2) }
-                },
-                globalOffsetText = new LinkFlowContainer
-                {
-                    RelativeSizeAxes = Axes.X,
-                    AutoSizeAxes = Axes.Y,
-                }
-            });
-
-            if (settings != null)
-            {
-                globalOffsetText.AddText("You can also ");
-                globalOffsetText.AddLink("adjust the global offset", () => settings.ShowAtControl<AudioOffsetAdjustControl>());
-                globalOffsetText.AddText(" based off this play.");
+                applyCalibration();
             }
+
+            return OffsetCalibrationResult.Success;
+        }
+
+        private void applyCalibration()
+        {
+            Current.Value = lastPlayBeatmapOffset - lastPlayAverage;
+            lastAppliedScore.Value = ReferenceScore.Value;
         }
 
         [Resolved]
@@ -297,10 +346,38 @@ namespace osu.Game.Screens.Play.PlayerSettings
             {
                 case GlobalAction.IncreaseOffset:
                     Current.Value += amount;
+
+                    if (scoreProcessor != null)
+                    {
+                        hitEventCountToLastCalibrationInGame = scoreProcessor.HitEvents.Count;
+                    }
+
                     return true;
 
                 case GlobalAction.DecreaseOffset:
                     Current.Value -= amount;
+
+                    if (scoreProcessor != null)
+                    {
+                        hitEventCountToLastCalibrationInGame = scoreProcessor.HitEvents.Count;
+                    }
+
+                    return true;
+
+                case GlobalAction.SkipCutscene:
+                    if (scoreProcessor == null) return true;
+
+                    if (scoreProcessor.Mods.Value.Any(m => !m.UserPlayable || m is IHasNoTimedInputs))
+                        return true;
+
+                    int hitEventsCount = scoreProcessor.HitEvents.Count;
+
+                    // Skip previous HitEvents from older calibration in the same gameplay because they have a different offset
+                    var hitEvents = scoreProcessor.HitEvents.Skip(hitEventCountToLastCalibrationInGame);
+
+                    calibrate(hitEvents);
+
+                    hitEventCountToLastCalibrationInGame = hitEventsCount;
                     return true;
             }
 

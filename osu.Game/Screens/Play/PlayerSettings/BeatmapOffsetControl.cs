@@ -14,6 +14,7 @@ using osu.Framework.Graphics.Containers;
 using osu.Framework.Input.Bindings;
 using osu.Framework.Input.Events;
 using osu.Framework.Localisation;
+using osu.Framework.Logging;
 using osu.Framework.Utils;
 using osu.Game.Beatmaps;
 using osu.Game.Configuration;
@@ -378,6 +379,10 @@ namespace osu.Game.Screens.Play.PlayerSettings
                     calibrate(hitEvents);
 
                     hitEventCountToLastCalibrationInGame = hitEventsCount;
+
+                    // Debug
+                    Logger.Log($"Offset : {lastPlayBeatmapOffset} - {lastPlayAverage} = {Current} ms");
+
                     return true;
             }
 

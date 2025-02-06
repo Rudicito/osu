@@ -129,7 +129,7 @@ namespace osu.Game.Overlays
             updateExpandedState(false);
 
             this.Delay(600).Schedule(updateFadeState);
-        }
+        }fsd
 
         protected override bool OnHover(HoverEvent e)
         {

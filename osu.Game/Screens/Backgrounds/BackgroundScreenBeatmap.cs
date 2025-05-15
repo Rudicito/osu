@@ -55,7 +55,11 @@ namespace osu.Game.Screens.Backgrounds
 
         private readonly DimmableBackground dimmable;
 
-        protected virtual DimmableBackground CreateFadeContainer() => new DimmableBackground { RelativeSizeAxes = Axes.Both };
+        protected virtual DimmableBackground CreateFadeContainer() => new DimmableBackground
+        {
+            RelativeSizeAxes = Axes.Both,
+            WidescreenStoryboard = Beatmap?.Beatmap?.WidescreenStoryboard ?? true
+        };
 
         public BackgroundScreenBeatmap(WorkingBeatmap beatmap = null)
         {
@@ -138,6 +142,8 @@ namespace osu.Game.Screens.Backgrounds
 
             public readonly Bindable<bool> StoryboardReplacesBackground = new Bindable<bool>();
 
+            public bool WidescreenStoryboard { get; set; } = true;
+
             public Background Background
             {
                 get => background;
@@ -171,6 +177,8 @@ namespace osu.Game.Screens.Backgrounds
                 ? new Vector2(BlurAmount.Value + (float)userBlurLevel.Value * USER_BLUR_FACTOR)
                 : new Vector2(BlurAmount.Value);
 
+            private FillMode fillMode => !IgnoreUserSettings.Value && !WidescreenStoryboard && ShowStoryboard.Value ? FillMode.Fit : FillMode.Fill;
+
             [BackgroundDependencyLoader]
             private void load(OsuConfigManager config)
             {
@@ -202,6 +210,12 @@ namespace osu.Game.Screens.Backgrounds
                 base.UpdateVisuals();
 
                 Background?.BlurTo(blurTarget, BACKGROUND_FADE_DURATION, Easing.OutQuint);
+
+                if (Background != null)
+                {
+                    Background.Sprite.FillMode = fillMode;
+                    Background.Sprite.Invalidate();
+                }
             }
         }
     }
